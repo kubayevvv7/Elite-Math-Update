@@ -158,20 +158,20 @@ def show_my_results(message):
     if username:
         all_results = query_db(
             """SELECT r.test_id, r.correct_count, r.incorrect_count, r.date, t.test_name, t.is_homework
-               FROM results r 
-               LEFT JOIN tests t ON r.test_id = t.test_id 
-               WHERE (r.username = ? OR r.tg_id = ?) 
-               ORDER BY r.test_id ASC, r.date ASC""", 
+                FROM results r 
+                LEFT JOIN tests t ON r.test_id = t.test_id 
+                WHERE (r.username = ? OR r.tg_id = ?) 
+                ORDER BY r.test_id ASC, r.date ASC""", 
             (username, tg_id), 
             fetch=True
         ) or []
     else:
         all_results = query_db(
             """SELECT r.test_id, r.correct_count, r.incorrect_count, r.date, t.test_name, t.is_homework
-               FROM results r 
-               LEFT JOIN tests t ON r.test_id = t.test_id 
-               WHERE r.tg_id = ? 
-               ORDER BY r.test_id ASC, r.date ASC""", 
+                FROM results r 
+                LEFT JOIN tests t ON r.test_id = t.test_id 
+                WHERE r.tg_id = ? 
+                ORDER BY r.test_id ASC, r.date ASC""", 
             (tg_id,), 
             fetch=True
         ) or []
@@ -303,11 +303,51 @@ def show_user_videos(message):
     
     bot.send_message(message.chat.id, "🎬 Quyidagi tugmalardan videoni oching:", reply_markup=kb)
 
-def go_back(message):
-    if message.from_user.id in ADMIN_IDS:
-        from handlers.admin_handlers import go_back as admin_go_back
-        admin_go_back(message)
-    else:
-        bot.send_message(message.chat.id, "🏠 Bosh menyu", reply_markup=user_main_menu())
-        user_state.pop(message.chat.id, None)
+@bot.message_handler(func=lambda m: m.text == "🧑🏻‍💻About founder")
+def about_founder(message):
+    kb = types.InlineKeyboardMarkup()
+    
 
+    kb.add(types.InlineKeyboardButton(text="Telegram", callback_data="founder_tg"))
+    kb.add(types.InlineKeyboardButton(text="Instagram", callback_data="founder_insta"))
+    kb.add(types.InlineKeyboardButton(text="GitHub", callback_data="founder_github"))
+    kb.add(types.InlineKeyboardButton(text="Facebook", callback_data="founder_fb"))
+    kb.add(types.InlineKeyboardButton(text="Gmail", callback_data="founder_mail"))
+    kb.add(types.InlineKeyboardButton(text="Telefon", callback_data="founder_phone"))
+
+    text = (
+        "👨‍💻 <b>Founder haqida</b>\n\n"
+        "Quyidagi tugmalar orqali menga yozishingiz yoki qo'ng'iroq qilishingiz mumkin:"
+    )
+    bot.send_message(message.chat.id, text, reply_markup=kb)
+@bot.callback_query_handler(func=lambda c: c.data == "founder_phone")
+def founder_phone_callback(call):
+    try:
+        bot.answer_callback_query(call.id)
+    except Exception:
+        pass
+
+    phone = "+998942686663"
+    try:
+        bot.send_contact(call.message.chat.id, phone, "Sherbek", last_name="Kubayev")
+    except Exception:
+        bot.send_message(call.message.chat.id, f"Telefon: {phone}")
+
+@bot.callback_query_handler(func=lambda c: c.data and c.data.startswith("founder_") and c.data != "founder_phone")
+def founder_link_callback(call):
+    try:
+        bot.answer_callback_query(call.id)
+    except Exception:
+        pass
+
+    links = {
+        "founder_tg": "https://t.me/sherbekkubayev",
+        "founder_insta": "https://www.instagram.com/sherbekkubayev/",
+        "founder_github": "https://github.com/kubayevvv7",
+        "founder_fb": "https://www.facebook.com/sherbekkubayev",
+        "founder_mail": "kubayevsherbek@gmail.com",
+    }
+
+    url = links.get(call.data)
+    if url:
+        bot.send_message(call.message.chat.id, url)

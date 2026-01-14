@@ -195,20 +195,30 @@ def send_quiz_to_users(quiz_id, file_id, correct_answer):
 
 def quiz_dispatcher_loop():
     """Har 2 soatda viktorina savolini yuboradi (bir kunda 12 ta)"""
+    logger.info("🧩 Viktorina dispatcher loop ishga tushdi")
+    first_run = True
+    
     while True:
         try:
+            if first_run:
+                logger.info("🔍 Viktorina savollarini tekshiryapman...")
+                first_run = False
+            
             quiz = get_unsent_quiz()
             if quiz:
                 quiz_id, file_id, correct_answer, sent_to_users = quiz
-                logger.info(f"Viktorina savoli yuborilmoqda: ID {quiz_id}")
-                send_quiz_to_users(quiz_id, file_id, correct_answer)
+                logger.info(f"📤 Viktorina savoli yuborilmoqda: ID {quiz_id}")
+                sent_count = send_quiz_to_users(quiz_id, file_id, correct_answer)
                 mark_quiz_as_sent(quiz_id)
+                logger.info(f"✅ Viktorina savoli {sent_count} ta userga yuborildi")
             else:
-                logger.debug("Yuborish uchun viktorina savoli topilmadi")
+                logger.info("📭 Yuborish uchun viktorina savoli topilmadi")
             
-            time.sleep(7200)
+            logger.info("⏰ Keyingi tekshirish 2 soatdan keyin...")
+            time.sleep(7200)  # 2 soat = 7200 soniya
         except Exception as e:
-            logger.exception(f"Viktorina dispatcher xatosi: {e}")
+            logger.exception(f"❌ Viktorina dispatcher xatosi: {e}")
+            logger.info("🔄 1 minutdan keyin qayta uriniladi...")
             time.sleep(60)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("quiz_answer:"))
@@ -237,6 +247,9 @@ def handle_quiz_answer(call):
         if remaining is None or remaining <= 0:
             bot.answer_callback_query(call.id, "⏰ Vaqt tugadi!")
             try:
+                # Avval tugmalarni o'chiramiz
+                bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+                # Keyin captionni yangilaymiz
                 bot.edit_message_caption(call.message.chat.id, call.message.message_id, caption="⏰ <b>Vaqt tugadi!</b>", parse_mode="HTML", reply_markup=None)
             except Exception:
                 pass
@@ -264,13 +277,24 @@ def handle_quiz_answer(call):
         
         bot.answer_callback_query(call.id, "✅ Javob qabul qilindi")
         try:
+            # Avval tugmalarni o'chiramiz
+            bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+            # Keyin captionni yangilaymiz
             bot.edit_message_caption(call.message.chat.id, call.message.message_id, caption=result_text, parse_mode="HTML", reply_markup=None)
-        except Exception:
-            bot.send_message(call.message.chat.id, result_text, parse_mode="HTML")
+        except Exception as e:
+            # Agar edit ishlamasa, yangi xabar yuboramiz
+            try:
+                bot.send_message(call.message.chat.id, result_text, parse_mode="HTML")
+            except Exception:
+                pass
     except Exception:
         logger.exception("Error in handle_quiz_answer")
         try:
             bot.answer_callback_query(call.id, "Xatolik")
         except Exception:
             pass
+
+
+
+
 

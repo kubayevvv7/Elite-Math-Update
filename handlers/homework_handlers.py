@@ -371,10 +371,10 @@ def show_homework_results(message):
     
     all_results = query_db(
         """SELECT r.test_id, r.correct_count, r.incorrect_count, r.date, t.is_homework
-           FROM results r 
-           LEFT JOIN tests t ON r.test_id = t.test_id 
-           WHERE (r.username = ? OR r.tg_id = ?) 
-           ORDER BY r.date DESC""",
+            FROM results r 
+            LEFT JOIN tests t ON r.test_id = t.test_id 
+            WHERE (r.username = ? OR r.tg_id = ?) 
+            ORDER BY r.date DESC""",
         (username, tg_id),
         fetch=True
     ) or []

@@ -29,6 +29,7 @@ def user_main_menu():
     m.add("📝 Test topshirish", "📈 Mening natijalarim")
     m.add("🎬 Videolar", "💰 Balans")
     m.add("✏️ Ismni tahrirlash", "📝 Uyga vazifa")
+    m.add("🧑🏻‍💻About founder")
     return m
 
 def back_button():
@@ -37,7 +38,6 @@ def back_button():
     return m
 
 def generate_tests_menu():
-    # Faqat oddiy testlarni ko'rsatish
     tests = query_db("SELECT test_id, test_name FROM tests WHERE is_homework = 0 OR is_homework IS NULL ORDER BY created_at DESC", fetch=True) or []
     m = types.ReplyKeyboardMarkup(resize_keyboard=True)
     for test_id, test_name in tests:
