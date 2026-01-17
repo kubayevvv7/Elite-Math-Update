@@ -120,37 +120,52 @@ def admin_quiz_delete_start(message):
     bot.send_message(message.chat.id, "O'chirish uchun savolni tanlang:", reply_markup=kb)
     user_state[message.chat.id] = {"step": "delete_quiz"}
 
-@bot.message_handler(func=lambda m: m.chat.id in user_state and user_state[m.chat.id].get("step") == "delete_quiz")
+@bot.message_handler(func=lambda m: m.chat.id in user_state and user_state[m.chat.id].get("step") == "delete_quiz" and m.from_user.id in ADMIN_IDS)
 def admin_delete_selected_quiz(message):
-    if message.text == "⬅️ Orqaga":
-        user_state.pop(message.chat.id, None)
-        admin_quiz_menu(message)
-        return
-    if message.from_user.id not in ADMIN_IDS:
-        return
-    match = re.search(r"(\d+)", message.text)
-    if not match:
-        bot.send_message(message.chat.id, "❌ Noto'g'ri tanlov. Iltimos menyudan tanlang.", reply_markup=admin_main_menu())
-        user_state.pop(message.chat.id, None)
-        return
-    qid = int(match.group(1))
-    r = query_db("SELECT file_path FROM quizzes WHERE id = ? AND active = 1", (qid,), fetch=True)
-    if not r:
-        bot.send_message(message.chat.id, "❌ Bunday aktiv savol topilmadi.", reply_markup=admin_main_menu())
-        user_state.pop(message.chat.id, None)
-        return
-    file_path = r[0][0]
-    query_db("UPDATE quizzes SET active = 0 WHERE id = ?", (qid,))
     try:
-        if file_path and os.path.exists(file_path):
-            os.remove(file_path)
-    except Exception:
-        pass
-    bot.send_message(message.chat.id, f"✅ Savol o'chirildi (id: {qid})", reply_markup=admin_main_menu())
-    user_state.pop(message.chat.id, None)
+        if message.text == "⬅️ Orqaga":
+            user_state.pop(message.chat.id, None)
+            admin_quiz_menu(message)
+            return
+        
+        # Check if message starts with ❌ (delete quiz button)
+        if not message.text.startswith("❌"):
+            bot.send_message(message.chat.id, "❌ Noto'g'ri tanlov. Iltimos menyudan tanlang.", reply_markup=admin_main_menu())
+            user_state.pop(message.chat.id, None)
+            return
+        
+        match = re.search(r"(\d+)", message.text)
+        if not match:
+            bot.send_message(message.chat.id, "❌ Noto'g'ri tanlov. Iltimos menyudan tanlang.", reply_markup=admin_main_menu())
+            user_state.pop(message.chat.id, None)
+            return
+        
+        qid = int(match.group(1))
+        r = query_db("SELECT file_path FROM quizzes WHERE id = ? AND active = 1", (qid,), fetch=True)
+        if not r:
+            bot.send_message(message.chat.id, "❌ Bunday aktiv savol topilmadi.", reply_markup=admin_main_menu())
+            user_state.pop(message.chat.id, None)
+            return
+        
+        file_path = r[0][0]
+        query_db("UPDATE quizzes SET active = 0 WHERE id = ?", (qid,))
+        try:
+            if file_path and os.path.exists(file_path):
+                os.remove(file_path)
+        except Exception as e:
+            logger.warning(f"Failed to delete quiz file {file_path}: {e}")
+        
+        bot.send_message(message.chat.id, f"✅ Savol o'chirildi (id: {qid})", reply_markup=admin_main_menu())
+        user_state.pop(message.chat.id, None)
+    except Exception as e:
+        logger.exception(f"Error in admin_delete_selected_quiz: {e}")
+        bot.send_message(message.chat.id, f"❌ Xatolik yuz berdi: {str(e)}", reply_markup=admin_main_menu())
+        user_state.pop(message.chat.id, None)
 
 def send_quiz_to_users(quiz_id, file_id, correct_answer):
-    """Barcha userlarga viktorina savolini yuboradi"""
+    """Barcha userlarga viktorina savolini yuboradi (bloklangan userlar bundan mustasno)"""
+    from handlers.admin_handlers import is_user_blocked
+    
     if ADMIN_IDS:
         placeholders = ','.join(['?' for _ in ADMIN_IDS])
         users = query_db(f"SELECT chat_id FROM users WHERE chat_id NOT IN ({placeholders})", [str(aid) for aid in ADMIN_IDS], fetch=True) or []
@@ -173,6 +188,7 @@ def send_quiz_to_users(quiz_id, file_id, correct_answer):
     
     sent_count = 0
     failed_count = 0
+    blocked_count = 0
     for (chat_id,) in users:
         try:
             try:
@@ -180,6 +196,11 @@ def send_quiz_to_users(quiz_id, file_id, correct_answer):
             except (ValueError, TypeError):
                 logger.warning(f"Noto'g'ri chat_id: {chat_id}")
                 failed_count += 1
+                continue
+            
+            # Bloklangan userlarga viktorina yubormaslik
+            if is_user_blocked(chat_id_int):
+                blocked_count += 1
                 continue
             
             bot.send_photo(chat_id_int, file_id, caption="🧩 <b>Viktorina savoli</b>\n⏰ Qolgan vaqt: 24 soat", parse_mode="HTML", reply_markup=kb)
@@ -190,7 +211,7 @@ def send_quiz_to_users(quiz_id, file_id, correct_answer):
             logger.warning(f"User {chat_id} ga viktorina yuborishda xatolik: {e}")
             failed_count += 1
     
-    logger.info(f"Viktorina savoli {sent_count} ta userga yuborildi, {failed_count} ta xatolik")
+    logger.info(f"Viktorina savoli {sent_count} ta userga yuborildi, {failed_count} ta xatolik, {blocked_count} ta bloklangan user o'tkazib yuborildi")
     return sent_count
 
 def quiz_dispatcher_loop():
@@ -224,6 +245,26 @@ def quiz_dispatcher_loop():
 @bot.callback_query_handler(func=lambda call: call.data.startswith("quiz_answer:"))
 def handle_quiz_answer(call):
     try:
+        # To'lov tekshirish
+        from handlers.payment_handlers import check_subscription
+        sub = check_subscription(str(call.from_user.id))
+        if not sub["active"]:
+            bot.answer_callback_query(call.id, "❌ To'lov qilmagansiz! Iltimos, hisobingizni to'ldiring.", show_alert=True)
+            text = "❌ <b>To'lov qilmagansiz!</b>\n\n"
+            text += "Iltimos, hisobingizni to'ldiring.\n"
+            text += "💰 Oylik to'lov: 15,000 so'm\n\n"
+            text += "To'lov qilish uchun pastdagi tugmani bosing."
+            kb = types.InlineKeyboardMarkup()
+            kb.add(types.InlineKeyboardButton("💳 Hisobni to'ldirish", callback_data="topup_account"))
+            bot.send_message(call.from_user.id, text, parse_mode="HTML", reply_markup=kb)
+            return
+        
+        # Blok tekshirish
+        from handlers.admin_handlers import is_user_blocked
+        if is_user_blocked(call.from_user.id):
+            bot.answer_callback_query(call.id, "❌ Qora ro'yxatdagi shaxsiz! Admin bilan bog'lanib qaytadan urinib ko'ring!", show_alert=True)
+            return
+        
         if call.from_user.id in ADMIN_IDS:
             bot.answer_callback_query(call.id, "Adminlar javob bera olmaydi")
             return

@@ -11,6 +11,55 @@ from utils import user_main_menu, back_button, extract_answers
 
 logger = logging.getLogger(__name__)
 
+def require_payment(message):
+    """To'lov tekshiruv funksiyasi - agar to'lov qilmagan bo'lsa True qaytaradi va xabar yuboradi"""
+    # Adminlar uchun ruxsat
+    if message.from_user.id in ADMIN_IDS:
+        return False
+    
+    # To'lov menyusiga ruxsat
+    if message.text == "💳 To'lov":
+        return False
+    
+    # Obunani tekshirish
+    from handlers.payment_handlers import check_subscription
+    sub = check_subscription(str(message.from_user.id))
+    
+    if not sub["active"]:
+        text = "❌ <b>To'lov qilmagansiz!</b>\n\n"
+        text += "Iltimos, hisobingizni to'ldiring.\n"
+        text += "💰 Oylik to'lov: 15,000 so'm\n\n"
+        text += "To'lov qilish uchun pastdagi tugmani bosing."
+        
+        # Barcha tugmalarni yopish
+        bot.send_message(message.chat.id, text, parse_mode="HTML", reply_markup=types.ReplyKeyboardRemove())
+        
+        # Faqat to'lov tugmasi bilan yangi keyboard
+        payment_kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        payment_kb.add("💳 To'lov")
+        
+        # Inline keyboard bilan to'lov tugmasi
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("💳 Hisobni to'ldirish", callback_data="topup_account"))
+        
+        bot.send_message(message.chat.id, "💳 To'lov qilish uchun tugmani bosing:", reply_markup=payment_kb)
+        bot.send_message(message.chat.id, "Yoki pastdagi tugmani bosing:", reply_markup=kb)
+        return True
+    
+    return False
+
+@bot.message_handler(func=lambda m: m.text is not None and m.text.strip() == "⬅️ Orqaga" and 
+                     (m.chat.id not in user_state or 
+                      m.chat.id in user_state and user_state[m.chat.id].get("step") not in 
+                      ["submit_homework", "get_homework_name", "get_homework_answers", 
+                       "select_homework_for_results", "delete_homework", "get_test_answers",
+                       "edit_name", "get_name", "quiz_menu", "quiz_wait_image", "homework_menu",
+                       "homework_admin_menu"]))
+def global_back_handler(message):
+    # Ensure any pending state is cleared and immediately return to main menu
+    user_state.pop(message.chat.id, None)
+    return go_back(message)
+
 @bot.message_handler(func=lambda m: m.chat.id in user_state and user_state[m.chat.id].get("step") == "get_name")
 def get_name(message):
     if message.text == "⬅️ Orqaga":
@@ -28,6 +77,8 @@ def get_name(message):
 
 @bot.message_handler(func=lambda m: m.text == "✏️ Ismni tahrirlash")
 def edit_name_start(message):
+    if require_payment(message):
+        return
     changes = get_name_changes(message.chat.id)
     if changes >= 3:
         bot.send_message(message.chat.id, "❌ Siz ismni faqat 3 marta o'zgartira olasiz.")
@@ -37,6 +88,18 @@ def edit_name_start(message):
 
 @bot.message_handler(func=lambda m: m.chat.id in user_state and user_state[m.chat.id].get("step") == "edit_name")
 def save_new_name(message):
+    # To'lov tekshirish (state-based handler uchun)
+    if message.from_user.id not in ADMIN_IDS:
+        from handlers.payment_handlers import check_subscription
+        sub = check_subscription(str(message.from_user.id))
+        if not sub["active"]:
+            text = "❌ <b>To'lov qilmagansiz!</b>\n\nIltimos, hisobingizni to'ldiring.\n💰 Oylik to'lov: 15,000 so'm\n\nTo'lov qilish uchun pastdagi tugmani bosing."
+            kb = types.InlineKeyboardMarkup()
+            kb.add(types.InlineKeyboardButton("💳 Hisobni to'ldirish", callback_data="topup_account"))
+            bot.send_message(message.chat.id, text, parse_mode="HTML", reply_markup=kb)
+            user_state.pop(message.chat.id, None)
+            return
+    
     if message.text == "⬅️ Orqaga":
         user_state.pop(message.chat.id, None)
         return go_back(message)
@@ -65,20 +128,56 @@ def save_new_name(message):
 
 @bot.message_handler(func=lambda m: m.text == "💰 Balans" and m.from_user.id not in ADMIN_IDS)
 def show_balance(message):
+    if require_payment(message):
+        return
     bal = get_balance(message.chat.id)
     bot.send_message(message.chat.id, f"💰 Sizning balansingiz: {bal} som", reply_markup=user_main_menu())
 
 @bot.message_handler(func=lambda m: m.text == "📝 Test topshirish")
 def submit_test_start(message):
+    if require_payment(message):
+        return
+    
+    # Blok tekshirish
+    from handlers.admin_handlers import is_user_blocked
+    if is_user_blocked(message.from_user.id):
+        bot.send_message(
+            message.chat.id,
+            "❌ <b>Qora ro'yxatdagi shaxsiz</b>\n\nSiz qora ro'yxatga kiritildingiz.\nAdmin bilan bog'lanib qaytadan urinib ko'ring!.\n\n@math_3322",
+            parse_mode="HTML",
+            reply_markup=user_main_menu()
+        )
+        return
+    
     saved_name = load_profile(message.chat.id) or user_state.get(message.chat.id, {}).get("student_name")
     user_state[message.chat.id] = {"step": "get_test_answers", "student_name": saved_name}
     bot.send_message(message.chat.id, "Test ID va javoblaringizni yuboring:\nMasalan: <b>B4086 1a2b3c...</b>", reply_markup=back_button(), parse_mode="HTML")
 
+
+# Handler for back button during test submission - must be registered before process_test_answers
+@bot.message_handler(func=lambda m: m.text == "⬅️ Orqaga" and 
+                     m.chat.id in user_state and user_state[m.chat.id].get("step") == "get_test_answers")
+def back_from_submit_test(message):
+    user_state.pop(message.chat.id, None)
+    return go_back(message)
+
 @bot.message_handler(func=lambda m: m.chat.id in user_state and user_state[m.chat.id].get("step") == "get_test_answers")
 def process_test_answers(message):
+    # Skip if this is the back button (handled by separate handler above)
     if message.text == "⬅️ Orqaga":
-        user_state.pop(message.chat.id, None)
-        return go_back(message)
+        return
+    
+    # To'lov tekshirish (state-based handler uchun)
+    if message.from_user.id not in ADMIN_IDS:
+        from handlers.payment_handlers import check_subscription
+        sub = check_subscription(str(message.from_user.id))
+        if not sub["active"]:
+            text = "❌ <b>To'lov qilmagansiz!</b>\n\nIltimos, hisobingizni to'ldiring.\n💰 Oylik to'lov: 15,000 so'm\n\nTo'lov qilish uchun pastdagi tugmani bosing."
+            kb = types.InlineKeyboardMarkup()
+            kb.add(types.InlineKeyboardButton("💳 Hisobni to'ldirish", callback_data="topup_account"))
+            bot.send_message(message.chat.id, text, parse_mode="HTML", reply_markup=kb)
+            user_state.pop(message.chat.id, None)
+            return
 
     state = user_state.get(message.chat.id, {})
     student_name = state.get("student_name") or load_profile(message.chat.id) or "Unknown"
@@ -139,19 +238,22 @@ def process_test_answers(message):
 
     bot.send_message(message.chat.id, result_text, reply_markup=user_main_menu(), parse_mode="HTML")
 
-    from config import ADMIN_IDS
     admin_caption = f"📥 Test topshirildi ({attempt_number}-natijasi):\n🧑‍🎓 {student_name}\n🆔 {test_id}\n✅ {correct} | ❌ {incorrect}\n{('@' + username) if username else 'tg:' + tg_id}"
 
     for admin in ADMIN_IDS:
         try:
-            bot.send_message(admin, admin_caption)
-        except Exception:
-            pass
+            kb = types.InlineKeyboardMarkup()
+            kb.add(types.InlineKeyboardButton("🚫 Bloklash", callback_data=f"quick_block:{message.from_user.id}"))
+            bot.send_message(admin, admin_caption, reply_markup=kb)
+        except Exception as e:
+            logger.exception(f"Send to admin error: {e}")
 
     user_state.pop(message.chat.id, None)
 
 @bot.message_handler(func=lambda m: m.text == "📈 Mening natijalarim")
 def show_my_results(message):
+    if require_payment(message):
+        return
     username = message.from_user.username or None
     tg_id = str(message.from_user.id)
     
@@ -217,6 +319,18 @@ def show_my_results(message):
 
 @bot.message_handler(func=lambda m: m.chat.id in user_state and user_state[m.chat.id].get("step") == "view_test_answers")
 def show_test_correct_answers(message):
+    # To'lov tekshirish (state-based handler uchun)
+    if message.from_user.id not in ADMIN_IDS:
+        from handlers.payment_handlers import check_subscription
+        sub = check_subscription(str(message.from_user.id))
+        if not sub["active"]:
+            text = "❌ <b>To'lov qilmagansiz!</b>\n\nIltimos, hisobingizni to'ldiring.\n💰 Oylik to'lov: 15,000 so'm\n\nTo'lov qilish uchun pastdagi tugmani bosing."
+            kb = types.InlineKeyboardMarkup()
+            kb.add(types.InlineKeyboardButton("💳 Hisobni to'ldirish", callback_data="topup_account"))
+            bot.send_message(message.chat.id, text, parse_mode="HTML", reply_markup=kb)
+            user_state.pop(message.chat.id, None)
+            return
+    
     if message.text == "⬅️ Orqaga":
         user_state.pop(message.chat.id, None)
         return go_back(message)
@@ -280,6 +394,20 @@ def show_test_correct_answers(message):
 
 @bot.message_handler(func=lambda m: m.text == "🎬 Videolar")
 def show_user_videos(message):
+    if require_payment(message):
+        return
+    
+    # Blok tekshirish
+    from handlers.admin_handlers import is_user_blocked
+    if is_user_blocked(message.from_user.id):
+        bot.send_message(
+            message.chat.id,
+            "❌ <b>Qora ro'yxatdagi shaxsiz</b>\n\nSiz qora ro'yxatga kiritildingiz.\nAdmin bilan bog'lanib qaytadan urinib ko'ring!.\n\n@math_3322",
+            parse_mode="HTML",
+            reply_markup=user_main_menu()
+        )
+        return
+    
     username = message.from_user.username or None
     tg_id = str(message.from_user.id)
     videos = query_db("SELECT v.test_id, t.test_name, v.video_url FROM videos v LEFT JOIN tests t ON v.test_id = t.test_id ORDER BY v.created_at ASC", fetch=True)
@@ -305,6 +433,8 @@ def show_user_videos(message):
 
 @bot.message_handler(func=lambda m: m.text == "🧑🏻‍💻About founder")
 def about_founder(message):
+    if require_payment(message):
+        return
     kb = types.InlineKeyboardMarkup()
     
 
@@ -329,11 +459,24 @@ def founder_phone_callback(call):
 
     phone = "+998942686663"
     try:
-        bot.send_contact(call.message.chat.id, phone, "Sherbek", last_name="Kubayev")
-    except Exception:
-        bot.send_message(call.message.chat.id, f"Telefon: {phone}")
+        # Try to send contact
+        bot.send_contact(call.message.chat.id, phone_number=phone, first_name="Sherbek", last_name="Kubayev")
+    except Exception as e:
+        # Fallback: send phone number as text
+        bot.send_message(call.message.chat.id, f"📞 Telefon raqam: {phone}")
 
-@bot.callback_query_handler(func=lambda c: c.data and c.data.startswith("founder_") and c.data != "founder_phone")
+@bot.callback_query_handler(func=lambda c: c.data == "founder_mail")
+def founder_mail_callback(call):
+    try:
+        bot.answer_callback_query(call.id)
+    except Exception:
+        pass
+    
+    email = "kubayevsherbek@gmail.com"
+    # Send email as text (mailto links don't work in inline buttons)
+    bot.send_message(call.message.chat.id, f"📧 Email: {email}\n\nEmail yozish uchun: mailto:{email}")
+
+@bot.callback_query_handler(func=lambda c: c.data and c.data.startswith("founder_") and c.data not in ["founder_phone", "founder_mail"])
 def founder_link_callback(call):
     try:
         bot.answer_callback_query(call.id)
@@ -345,9 +488,31 @@ def founder_link_callback(call):
         "founder_insta": "https://www.instagram.com/sherbekkubayev/",
         "founder_github": "https://github.com/kubayevvv7",
         "founder_fb": "https://www.facebook.com/sherbekkubayev",
-        "founder_mail": "kubayevsherbek@gmail.com",
     }
 
     url = links.get(call.data)
     if url:
-        bot.send_message(call.message.chat.id, url)
+        # Send URL as text so user can click it
+        bot.send_message(call.message.chat.id, f"🔗 {url}")
+
+@bot.message_handler(func=lambda m: m.text == "💳 To'lov")
+def show_payment_menu(message):
+    """To'lov menyusi"""
+    from handlers.payment_handlers import show_payment_menu
+    show_payment_menu(message)
+
+def go_back(message):
+    # Return user to appropriate main menu and clear any state
+    try:
+        if message.from_user.id in ADMIN_IDS:
+            from utils import admin_main_menu
+            bot.send_message(message.chat.id, "🏠 Bosh menyu", reply_markup=admin_main_menu())
+        else:
+            bot.send_message(message.chat.id, "🏠 Bosh menyu", reply_markup=user_main_menu())
+    except Exception:
+        # Fallback: send a simple text message
+        try:
+            bot.send_message(message.chat.id, "🏠 Bosh menyu")
+        except Exception:
+            pass
+    user_state.pop(message.chat.id, None)

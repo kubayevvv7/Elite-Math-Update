@@ -92,3 +92,27 @@ htmlcov/
 # Telegram bot specific
 bot_token.txt
 config_local.py
+
+
+
+
+# Media files (viktorina rasmlari)
+videos/
+*.jpg
+*.jpeg
+*.png
+*.gif
+
+# Environment variants (lekin .env.example ignore qilinmasligi kerak)
+.env.local
+.env.production
+.env.development
+
+# Backup files
+*.db-journal
+*.db-wal
+*.db-shm
+
+# System files
+*.pid
+*.sock

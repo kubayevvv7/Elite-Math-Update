@@ -66,6 +66,61 @@ def init_db():
             sent_to_users INTEGER DEFAULT 0
         )
     ''')
+    
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS blocked_users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT UNIQUE,
+            username TEXT,
+            student_name TEXT,
+            blocked_at TEXT,
+            blocked_by TEXT,
+            reason TEXT
+        )
+    ''')
+    
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS bot_cards (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            card_number TEXT NOT NULL,
+            card_owner TEXT,
+            bank_name TEXT,
+            is_active INTEGER DEFAULT 1
+        )
+    ''')
+    
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT,
+            username TEXT,
+            student_name TEXT,
+            amount INTEGER DEFAULT 15000,
+            status TEXT DEFAULT 'pending',
+            card_number TEXT,
+            payment_date TEXT,
+            verified_date TEXT,
+            verified_by TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT UNIQUE,
+            username TEXT,
+            student_name TEXT,
+            subscription_type TEXT DEFAULT 'monthly',
+            price INTEGER DEFAULT 15000,
+            start_date TEXT,
+            end_date TEXT,
+            is_active INTEGER DEFAULT 1,
+            payment_id INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
     conn.commit()
 
     # Add name_changes column if not exists
